@@ -1,0 +1,69 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build output and generated assets
+dist/
+build/
+coverage/
+.next/
+.nuxt/
+.svelte-kit/
+out/
+tmp/
+temp/
+.cache/
+.parcel-cache/
+.vite/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Kubernetes secrets and local overrides
+k8s/*secret*.yml
+k8s/*secret*.yaml
+!k8s/*secret*.example.yml
+!k8s/*secret*.example.yaml
+docker-compose.override.yml
+docker-compose.*.local.yml
+
+# Database, cache, and runtime files
+*.sqlite
+*.sqlite3
+*.db
+*.pid
+*.seed
+
+# Package manager caches
+.npm/
+.pnpm-store/
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Editor and OS files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.example.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local tooling
+.eslintcache
+.stylelintcache
