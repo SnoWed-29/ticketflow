@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -10,4 +5,197 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+  CANCELLED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TicketEventType {
+  CREATED
+  UPDATED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+  ASSIGNED
+  UNASSIGNED
+  COMMENT_ADDED
+  ATTACHMENT_ADDED
+  CATEGORY_CHANGED
+  RESOLVED
+  CLOSED
+  REOPENED
+}
+
+enum NotificationType {
+  TICKET_CREATED
+  TICKET_UPDATED
+  TICKET_ASSIGNED
+  COMMENT_ADDED
+  STATUS_CHANGED
+  PRIORITY_CHANGED
+}
+
+model Category {
+  id          String  @id @default(uuid()) @db.Uuid
+  name        String  @unique
+  slug        String  @unique
+  description String?
+  isActive    Boolean @default(true) @map("is_active")
+
+  tickets Ticket[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive], map: "idx_categories_is_active")
+  @@map("categories")
+}
+
+model Ticket {
+  id          String         @id @default(uuid()) @db.Uuid
+  title       String
+  description String?
+  status      TicketStatus   @default(OPEN)
+  priority    TicketPriority @default(MEDIUM)
+
+  requesterId String  @map("requester_id")
+  assigneeId  String? @map("assignee_id")
+
+  categoryId String?   @map("category_id") @db.Uuid
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  comments      Comment[]
+  attachments   Attachment[]
+  notifications Notification[]
+  events        TicketEvent[]
+
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  resolvedAt DateTime? @map("resolved_at")
+  closedAt   DateTime? @map("closed_at")
+
+  // Common ticket list filters
+  @@index([status], map: "idx_tickets_status")
+  @@index([priority], map: "idx_tickets_priority")
+  @@index([categoryId], map: "idx_tickets_category_id")
+  // Common dashboard / list queries
+  @@index([status, priority], map: "idx_tickets_status_priority")
+  @@index([status, createdAt], map: "idx_tickets_status_created_at")
+  @@index([categoryId, status], map: "idx_tickets_category_status")
+  // User-related lookups
+  @@index([requesterId], map: "idx_tickets_requester_id")
+  @@index([assigneeId], map: "idx_tickets_assignee_id")
+  @@index([requesterId, status], map: "idx_tickets_requester_status")
+  @@index([assigneeId, status], map: "idx_tickets_assignee_status")
+  // Sorting / recent tickets
+  @@index([createdAt], map: "idx_tickets_created_at")
+  @@index([updatedAt], map: "idx_tickets_updated_at")
+  @@map("tickets")
+}
+
+model Comment {
+  id      String @id @default(uuid()) @db.Uuid
+  content String
+
+  ticketId String @map("ticket_id") @db.Uuid
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  authorId String @map("author_id")
+
+  attachments Attachment[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Get comments for a ticket, ordered by date
+  @@index([ticketId, createdAt], map: "idx_comments_ticket_created_at")
+  // Get comments written by a user
+  @@index([authorId, createdAt], map: "idx_comments_author_created_at")
+  @@map("comments")
+}
+
+model Attachment {
+  id           String @id @default(uuid()) @db.Uuid
+  filename     String
+  originalName String @map("original_name")
+  mimeType     String @map("mime_type")
+  size         Int
+  path         String
+
+  ticketId String @map("ticket_id") @db.Uuid
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  commentId String?  @map("comment_id") @db.Uuid
+  comment   Comment? @relation(fields: [commentId], references: [id], onDelete: SetNull)
+
+  uploadedById String @map("uploaded_by_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Attachments by ticket
+  @@index([ticketId, createdAt], map: "idx_attachments_ticket_created_at")
+  // Attachments linked to comments
+  @@index([commentId], map: "idx_attachments_comment_id")
+  // Uploaded files by user
+  @@index([uploadedById], map: "idx_attachments_uploaded_by_id")
+  @@map("attachments")
+}
+
+model Notification {
+  id      String           @id @default(uuid()) @db.Uuid
+  type    NotificationType
+  title   String
+  message String
+  isRead  Boolean          @default(false) @map("is_read")
+
+  userId String @map("user_id")
+
+  ticketId String? @map("ticket_id") @db.Uuid
+  ticket   Ticket? @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  // Main notification page query: user notifications, unread first / recent
+  @@index([userId, isRead, createdAt], map: "idx_notifications_user_read_created_at")
+  // All notifications for one user
+  @@index([userId, createdAt], map: "idx_notifications_user_created_at")
+  // Notifications related to a ticket
+  @@index([ticketId, createdAt], map: "idx_notifications_ticket_created_at")
+  @@map("notifications")
+}
+
+model TicketEvent {
+  id   String          @id @default(uuid()) @db.Uuid
+  type TicketEventType
+
+  ticketId String @map("ticket_id") @db.Uuid
+  ticket   Ticket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  actorId String? @map("actor_id")
+
+  oldValue String? @map("old_value")
+  newValue String? @map("new_value")
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Ticket history timeline
+  @@index([ticketId, createdAt], map: "idx_ticket_events_ticket_created_at")
+  // Events by user
+  @@index([actorId, createdAt], map: "idx_ticket_events_actor_created_at")
+  // Filter by event type
+  @@index([type, createdAt], map: "idx_ticket_events_type_created_at")
+  @@map("ticket_events")
 }
