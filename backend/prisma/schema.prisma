@@ -113,15 +113,18 @@ model Comment {
 
   authorId String @map("author_id")
 
+  isInternalNote Boolean   @default(false) @map("is_internal_note")
+  deletedAt      DateTime? @map("deleted_at")
+
   attachments Attachment[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  // Get comments for a ticket, ordered by date
   @@index([ticketId, createdAt], map: "idx_comments_ticket_created_at")
-  // Get comments written by a user
+  @@index([ticketId, isInternalNote, createdAt], map: "idx_comments_ticket_internal_created_at")
   @@index([authorId, createdAt], map: "idx_comments_author_created_at")
+  @@index([deletedAt], map: "idx_comments_deleted_at")
   @@map("comments")
 }
 
