@@ -12,9 +12,11 @@ import type {
   ChangePriorityInput,
   ChangeStatusInput,
   CreateTicketInput,
+  TicketDetailQuery,
   TicketListQuery,
   UpdateTicketInput,
-} from "./ticket.validator.js";
+} from "./ticket.schema";
+import type { TicketSerializerRole } from "./ticket.serializer";
 
 export class TicketServiceError extends Error {
   statusCode: number;
@@ -27,11 +29,7 @@ export class TicketServiceError extends Error {
 
 type ActorContext = {
   actorId?: string | null;
-};
-
-type TicketDetailOptions = {
-  includeComments?: boolean;
-  includeEvents?: boolean;
+  role?: TicketSerializerRole;
 };
 
 function ensureTicketExists<T>(
@@ -101,15 +99,21 @@ export const ticketService = {
     return ticketSerializer.detail(ticket);
   },
 
-  async listTickets(query: TicketListQuery) {
+  async listTickets(query: TicketListQuery, context: ActorContext = {}) {
     const result = await ticketRepository.findMany(query);
     return ticketSerializer.listResponse(result);
   },
+  async getTicketById(
+  id: string,
+  options: TicketDetailQuery,
+  context: ActorContext = {},
+  ) {
+  const ticket = await ticketRepository.findById(id, options);
+  ensureTicketExists(ticket);
 
-  async getTicketById(id: string, options: TicketDetailOptions = {}) {
-    const ticket = await ticketRepository.findById(id, options);
-    ensureTicketExists(ticket);
-    return ticketSerializer.detail(ticket);
+  return ticketSerializer.detail(ticket, {
+      role: context.role,
+    });
   },
 
   async updateTicket(

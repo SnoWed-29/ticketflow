@@ -1,3 +1,9 @@
+export type TicketSerializerRole = "USER" | "AGENT" | "MANAGER" | "ADMIN";
+
+type TicketSerializerDetailOptions = {
+  role?: TicketSerializerRole;
+};
+
 const serializeCategory = (category: any) => {
   if (!category) return null;
 
@@ -10,12 +16,22 @@ const serializeCategory = (category: any) => {
   };
 };
 
-const serializeComment = (comment: any) => {
+const canViewInternalNotes = (role: TicketSerializerRole = "USER") => {
+  return role === "AGENT" || role === "MANAGER" || role === "ADMIN";
+};
+
+const serializeComment = (
+  comment: any,
+  options: { includeInternalFlag?: boolean } = {},
+) => {
   return {
     id: comment.id,
     content: comment.content,
     ticketId: comment.ticketId,
     authorId: comment.authorId,
+    isInternalNote: options.includeInternalFlag
+      ? comment.isInternalNote
+      : undefined,
     createdAt: comment.createdAt,
     updatedAt: comment.updatedAt,
   };
@@ -53,7 +69,9 @@ export const ticketSerializer = {
     };
   },
 
-  detail(ticket: any) {
+  detail(ticket: any, options: TicketSerializerDetailOptions = {}) {
+    const includeInternalNotes = canViewInternalNotes(options.role);
+
     return {
       id: ticket.id,
       title: ticket.title,
@@ -70,7 +88,13 @@ export const ticketSerializer = {
       updatedAt: ticket.updatedAt,
 
       comments: Array.isArray(ticket.comments)
-        ? ticket.comments.map(serializeComment)
+        ? ticket.comments
+            .filter((comment: any) => includeInternalNotes || !comment.isInternalNote)
+            .map((comment: any) =>
+              serializeComment(comment, {
+                includeInternalFlag: includeInternalNotes,
+              }),
+            )
         : undefined,
 
       events: Array.isArray(ticket.events)

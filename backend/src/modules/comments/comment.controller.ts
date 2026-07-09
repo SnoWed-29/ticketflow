@@ -4,6 +4,20 @@ import {
     CommentServiceError,
 } from "./comment.service";
 import { USER_ROLES, type UserRole } from "./comment.constants";
+import { sendError, sendSuccess } from "../../utils/apiResponse";
+import type {
+    CommentIdParams,
+    CreateCommentInput,
+    TicketIdParams,
+    UpdateCommentInput,
+} from "./comment.schema";
+
+const getValidated = <T>(
+    res: Response,
+    key: "body" | "params" | "query",
+): T => {
+    return res.locals.validated?.[key] as T;
+};
 
 const getActorId = (req: Request): string | null => {
     const actorId = req.header("x-user-id");
@@ -38,26 +52,26 @@ const getActorContext = (req: Request) => {
 
 const handleError = (error: unknown, res: Response) => {
     if(error instanceof CommentServiceError){
-        res.status(error.statusCode).json({
-            message: error.message,
-        });
+        sendError(res, error.statusCode, error.message);
         return;
     }
     console.log(error);
-    res.status(500).json({
-        message: "internal server error"
-    });
+    sendError(res, 500, "internal server error");
 }
 
 export const commentController = {
     async create(req: Request, res: Response) {
         try {
+           const params = getValidated<TicketIdParams>(res, "params");
+           const body = getValidated<CreateCommentInput>(res, "body");
+
            const results = await commentService.createComment(
-            String(req.params.ticketId),
-            req.body,
+            params.ticketId,
+            body,
             getActorContext(req)
            );
-           res.status(201).json({
+           sendSuccess(res, {
+            statusCode: 201,
             message: "Comment created Successfully",
             data: results
            })
@@ -68,11 +82,13 @@ export const commentController = {
 
     async listByTicket(req: Request, res: Response) {
         try {
+            const params = getValidated<TicketIdParams>(res, "params");
+
             const result = await commentService.listComments(
-                String(req.params.ticketId),
+                params.ticketId,
                 getActorContext(req)
             );
-            res.status(200).json(result);
+            sendSuccess(res, result);
         }catch (error) {
             handleError(error, res)
         }
@@ -80,13 +96,16 @@ export const commentController = {
 
     async update(req: Request, res: Response) {
         try{
+            const params = getValidated<CommentIdParams>(res, "params");
+            const body = getValidated<UpdateCommentInput>(res, "body");
+
             const result = await commentService.updateComment(
-                String(req.params.commentId), 
-                req.body,
+                params.commentId,
+                body,
                 getActorContext(req)
             );
 
-            res.status(200).json({
+            sendSuccess(res, {
                 message: "comment has been updated",
                 data: result
             });
@@ -97,12 +116,14 @@ export const commentController = {
 
     async remove (req: Request, res: Response){
         try{
+            const params = getValidated<CommentIdParams>(res, "params");
+
             const result = await commentService.deleteComment(
-                String(req.params.commentId),
+                params.commentId,
                 getActorContext(req)
             );
 
-            res.status(200).json(result)
+            sendSuccess(res, result)
         }catch (error){
             handleError(error, res)
         }

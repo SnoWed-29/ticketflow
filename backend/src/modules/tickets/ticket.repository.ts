@@ -1,4 +1,6 @@
 import { prisma } from "../../db/prisma.js";
+import { getPagination, getPaginationMeta } from "../../utils/pagination.js";
+import { buildOrderBy } from "../../utils/sorting.js";
 import {
   DEFAULT_PAGE_SIZE,
   DEFAULT_SORT_BY,
@@ -11,7 +13,7 @@ import type {
   CreateTicketInput,
   TicketListQuery,
   UpdateTicketInput,
-} from "./ticket.validator.js";
+} from "./ticket.schema.js";
 
 const buildTicketWhere = (query: TicketListQuery) => {
   const where: any = {};
@@ -89,19 +91,19 @@ export const ticketRepository = {
   async findMany(query: TicketListQuery) {
     const page = query.page || 1;
     const limit = query.limit || DEFAULT_PAGE_SIZE;
-    const skip = (page - 1) * limit;
+    const pagination = getPagination({ page, limit });
 
     const where = buildTicketWhere(query);
 
-    const orderBy = {
-      [query.sortBy || DEFAULT_SORT_BY]: query.sortOrder || DEFAULT_SORT_ORDER,
-    };
+    const orderBy = buildOrderBy(
+      query.sortBy || DEFAULT_SORT_BY,
+      query.sortOrder || DEFAULT_SORT_ORDER,
+    );
 
     const [items, total] = await prisma.$transaction([
       prisma.ticket.findMany({
         where,
-        skip,
-        take: limit,
+        ...pagination,
         orderBy,
         include: {
           category: true,
@@ -112,10 +114,7 @@ export const ticketRepository = {
 
     return {
       items,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
+      ...getPaginationMeta({ total, page, limit }),
     };
   },
 
