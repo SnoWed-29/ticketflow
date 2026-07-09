@@ -1,66 +1,85 @@
 import { Router } from "express";
+import { validateRequest } from "../../middlewares/validateRequest.js";
 import { ticketController } from "./ticket.controller.js";
 import {
-  validateAssignTicketBody,
-  validateChangePriorityBody,
-  validateChangeStatusBody,
-  validateCreateTicketBody,
-  validateListTicketsQuery,
-  validateTicketId,
-  validateUpdateTicketBody,
-} from "./ticket.validator.js";
+  assignTicketBodySchema,
+  changeTicketPriorityBodySchema,
+  changeTicketStatusBodySchema,
+  createTicketBodySchema,
+  listTicketsQuerySchema,
+  ticketDetailQuerySchema,
+  ticketIdParamSchema,
+  updateTicketBodySchema,
+} from "./ticket.schema.js";
 
 const router = Router();
 
 router.post(
   "/",
-  validateCreateTicketBody,
+  validateRequest({
+    body: createTicketBodySchema,
+  }),
   ticketController.create,
 );
 
 router.get(
   "/",
-  validateListTicketsQuery,
+  validateRequest({
+    query: listTicketsQuerySchema,
+  }),
   ticketController.list,
 );
 
 router.get(
   "/:id",
-  validateTicketId,
+  validateRequest({
+    params: ticketIdParamSchema,
+    query: ticketDetailQuerySchema,
+  }),
   ticketController.detail,
 );
 
 router.patch(
   "/:id",
-  validateTicketId,
-  validateUpdateTicketBody,
+  validateRequest({
+    params: ticketIdParamSchema,
+    body: updateTicketBodySchema,
+  }),
   ticketController.update,
 );
 
 router.patch(
   "/:id/status",
-  validateTicketId,
-  validateChangeStatusBody,
+  validateRequest({
+    params: ticketIdParamSchema,
+    body: changeTicketStatusBodySchema,
+  }),
   ticketController.changeStatus,
 );
 
 router.patch(
   "/:id/assign",
-  validateTicketId,
-  validateAssignTicketBody,
+  validateRequest({
+    params: ticketIdParamSchema,
+    body: assignTicketBodySchema,
+  }),
   ticketController.assign,
 );
 
 router.patch(
   "/:id/priority",
-  validateTicketId,
-  validateChangePriorityBody,
+  validateRequest({
+    params: ticketIdParamSchema,
+    body: changeTicketPriorityBodySchema,
+  }),
   ticketController.changePriority,
 );
 
 router.delete(
   "/:id",
-  validateTicketId,
+  validateRequest({
+    params: ticketIdParamSchema,
+  }),
   ticketController.remove,
 );
 

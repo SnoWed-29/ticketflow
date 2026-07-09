@@ -1,20 +1,25 @@
 import Router from "express";
-import { commentController } from "./comment.controller";
+import { validateRequest } from "../../middlewares/validateRequest.js";
+import { commentController } from "./comment.controller.js";
 import {
-    validateCreateCommentBody,
-    validateTicketIdParam
-} from "./comment.validator";
+    createCommentBodySchema,
+    ticketIdParamSchema,
+} from "./comment.schema.js";
 
 const router = Router();
 
 router.post("/:ticketId/comments",
-    validateTicketIdParam,
-    validateCreateCommentBody,
+    validateRequest({
+        params: ticketIdParamSchema,
+        body: createCommentBodySchema,
+    }),
     commentController.create
 )
 
 router.get("/:ticketId/comments",
-    validateTicketIdParam,
+    validateRequest({
+        params: ticketIdParamSchema,
+    }),
     commentController.listByTicket
 )
 

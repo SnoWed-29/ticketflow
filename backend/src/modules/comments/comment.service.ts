@@ -9,7 +9,7 @@ import { commentSerializer } from "./comment.serializer";
 import type {
     CreateCommentInput,
     UpdateCommentInput,
-} from "./comment.validator";
+} from "./comment.schema";
 import { writeTicketEvent } from "../tickets/ticket-event.writer";
 import { TICKET_EVENT_TYPES } from "../tickets/ticket.constants";
 

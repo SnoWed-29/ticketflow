@@ -2,7 +2,7 @@ import { prisma } from "../../db/prisma";
 import type {
     CreateCommentInput,
     UpdateCommentInput,
-} from "./comment.validator";
+} from "./comment.schema";
 
 export const commentRepository = {
     async findTicketById(ticketId: string) {

@@ -1,22 +1,27 @@
 import { Router } from "express";
-import { commentController } from "./comment.controller";
+import { validateRequest } from "../../middlewares/validateRequest.js";
+import { commentController } from "./comment.controller.js";
 import {
-  validateCommentIdParam,
-  validateUpdateCommentBody,
-} from "./comment.validator";
+  commentIdParamSchema,
+  updateCommentBodySchema,
+} from "./comment.schema.js";
 
 const router = Router();
 
 router.patch(
   "/:commentId",
-  validateCommentIdParam,
-  validateUpdateCommentBody,
+  validateRequest({
+    params: commentIdParamSchema,
+    body: updateCommentBodySchema,
+  }),
   commentController.update,
 );
 
 router.delete(
   "/:commentId",
-  validateCommentIdParam,
+  validateRequest({
+    params: commentIdParamSchema,
+  }),
   commentController.remove,
 );
 
