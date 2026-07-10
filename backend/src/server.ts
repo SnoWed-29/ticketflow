@@ -5,6 +5,7 @@ import ticketRoutes from "./modules/tickets/ticket.routes.js"
 import commentRoutes from "./modules/comments/comment.routes.js";
 import ticketCommentRoutes from "./modules/comments/ticket-comments.routes.js";
 import { authenticate } from "./modules/auth/auth.middleware.js";
+import { authRouter } from "./modules/auth/auth.routes.js";
 // import { getKeycloakAuthConfig } from "./modules/auth";
 
 // const keycloakConfig = getKeycloakAuthConfig();
@@ -27,7 +28,7 @@ app.use("/", observabilityRoutes);
 
 app.use("/api", authenticate);
 
-
+app.use("/api", authRouter);
 
 app.use("/api/tickets", ticketRoutes);
 app.use("/api/tickets", ticketCommentRoutes);
