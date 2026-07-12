@@ -1,12 +1,25 @@
+import type { AuthenticatedPrincipal } from "../auth/auth.types.js";
+
 import {
   ALLOWED_STATUS_TRANSITIONS,
   DEFAULT_TICKET_PRIORITY,
   TICKET_EVENT_TYPES,
   type TicketStatus,
 } from "./ticket.constants.js";
+
 import { writeTicketEvent } from "./ticket-event.writer.js";
 import { ticketRepository } from "./ticket.repository.js";
 import { ticketSerializer } from "./ticket.serializer.js";
+
+import {
+  canCancelTicket,
+  canManageTicketWorkflow,
+  canReadTicket,
+  canUpdateTicket,
+  getTicketSerializerRole,
+  isSupportStaff,
+} from "./ticket.authorization.js";
+
 import type {
   AssignTicketInput,
   ChangePriorityInput,
@@ -15,8 +28,7 @@ import type {
   TicketDetailQuery,
   TicketListQuery,
   UpdateTicketInput,
-} from "./ticket.schema";
-import type { TicketSerializerRole } from "./ticket.serializer";
+} from "./ticket.schema.js";
 
 export class TicketServiceError extends Error {
   statusCode: number;
@@ -27,24 +39,44 @@ export class TicketServiceError extends Error {
   }
 }
 
-type ActorContext = {
-  actorId?: string | null;
-  role?: TicketSerializerRole;
-};
-
 function ensureTicketExists<T>(
   ticket: T | null | undefined,
 ): asserts ticket is NonNullable<T> {
   if (!ticket) {
-    throw new TicketServiceError(404, "Ticket not found.");
+    throw new TicketServiceError(
+      404,
+      "Ticket not found.",
+    );
   }
 }
 
-const getChangedFields = (before: any, afterInput: Record<string, unknown>) => {
-  const changes: Record<string, { oldValue: unknown; newValue: unknown }> = {};
+function ensureAuthorized(
+  authorized: boolean,
+  message = "You do not have permission to perform this action.",
+): void {
+  if (!authorized) {
+    throw new TicketServiceError(403, message);
+  }
+}
 
-  for (const [field, newValue] of Object.entries(afterInput)) {
-    if (newValue === undefined) continue;
+const getChangedFields = (
+  before: Record<string, unknown>,
+  afterInput: Record<string, unknown>,
+) => {
+  const changes: Record<
+    string,
+    {
+      oldValue: unknown;
+      newValue: unknown;
+    }
+  > = {};
+
+  for (const [field, newValue] of Object.entries(
+    afterInput,
+  )) {
+    if (newValue === undefined) {
+      continue;
+    }
 
     const oldValue = before[field];
 
@@ -60,32 +92,37 @@ const getChangedFields = (before: any, afterInput: Record<string, unknown>) => {
 };
 
 export const ticketService = {
-  async createTicket(input: CreateTicketInput, context: ActorContext = {}) {
-    const requesterId = input.requesterId ?? context.actorId;
+  async createTicket(
+    input: CreateTicketInput,
+    principal: AuthenticatedPrincipal,
+  ) {
+    const category =
+      await ticketRepository.findCategoryById(
+        input.categoryId,
+      );
 
-    if (!requesterId) {
+    if (!category) {
       throw new TicketServiceError(
         400,
-        "requesterId is required until authentication is implemented.",
+        "Category does not exist or is inactive.",
       );
     }
 
-    const category = await ticketRepository.findCategoryById(input.categoryId);
-
-    if (!category) {
-      throw new TicketServiceError(400, "Category does not exist or is inactive.");
-    }
-
+    /*
+     * The authenticated Keycloak subject is always the requester.
+     * A body requesterId must never override it.
+     */
     const ticket = await ticketRepository.create({
       ...input,
-      requesterId,
-      priority: input.priority ?? DEFAULT_TICKET_PRIORITY,
+      requesterId: principal.subject,
+      priority:
+        input.priority ?? DEFAULT_TICKET_PRIORITY,
     });
 
     await writeTicketEvent({
       ticketId: ticket.id,
       type: TICKET_EVENT_TYPES.CREATED,
-      actorId: context.actorId ?? requesterId,
+      actorId: principal.subject,
       metadata: {
         title: ticket.title,
         priority: ticket.priority,
@@ -96,51 +133,106 @@ export const ticketService = {
       },
     });
 
-    return ticketSerializer.detail(ticket);
+    return ticketSerializer.detail(ticket, {
+      role: getTicketSerializerRole(principal),
+    });
   },
 
-  async listTickets(query: TicketListQuery, context: ActorContext = {}) {
-    const result = await ticketRepository.findMany(query);
+  async listTickets(
+    query: TicketListQuery,
+    principal: AuthenticatedPrincipal,
+  ) {
+    /*
+     * Users are forced to their own requesterId.
+     * Support staff can use the validated requester filter.
+     */
+    const authorizedQuery: TicketListQuery =
+      isSupportStaff(principal)
+        ? query
+        : {
+            ...query,
+            requesterId: principal.subject,
+          };
+
+    const result =
+      await ticketRepository.findMany(
+        authorizedQuery,
+      );
+
     return ticketSerializer.listResponse(result);
   },
-  async getTicketById(
-  id: string,
-  options: TicketDetailQuery,
-  context: ActorContext = {},
-  ) {
-  const ticket = await ticketRepository.findById(id, options);
-  ensureTicketExists(ticket);
 
-  return ticketSerializer.detail(ticket, {
-      role: context.role,
+  async getTicketById(
+    id: string,
+    options: TicketDetailQuery,
+    principal: AuthenticatedPrincipal,
+  ) {
+    const ticket =
+      await ticketRepository.findById(id, options);
+
+    ensureTicketExists(ticket);
+
+    ensureAuthorized(
+      canReadTicket(principal, ticket),
+      "You cannot access this ticket.",
+    );
+
+    return ticketSerializer.detail(ticket, {
+      role: getTicketSerializerRole(principal),
     });
   },
 
   async updateTicket(
     id: string,
     input: UpdateTicketInput,
-    context: ActorContext = {},
+    principal: AuthenticatedPrincipal,
   ) {
-    const currentTicket = await ticketRepository.findById(id);
+    const currentTicket =
+      await ticketRepository.findById(id);
+
     ensureTicketExists(currentTicket);
 
-    if (input.categoryId !== undefined && input.categoryId !== null) {
-      const category = await ticketRepository.findCategoryById(input.categoryId);
+    ensureAuthorized(
+      canUpdateTicket(principal, currentTicket),
+      "You cannot update this ticket.",
+    );
+
+    if (
+      input.categoryId !== undefined &&
+      input.categoryId !== null
+    ) {
+      const category =
+        await ticketRepository.findCategoryById(
+          input.categoryId,
+        );
 
       if (!category) {
-        throw new TicketServiceError(400, "Category does not exist or is inactive.");
+        throw new TicketServiceError(
+          400,
+          "Category does not exist or is inactive.",
+        );
       }
     }
 
-    const changes = getChangedFields(currentTicket, input as Record<string, unknown>);
+    const changes = getChangedFields(
+      currentTicket as unknown as Record<
+        string,
+        unknown
+      >,
+      input as Record<string, unknown>,
+    );
 
-    const updatedTicket = await ticketRepository.update(id, input);
+    const updatedTicket =
+      await ticketRepository.update(id, input);
 
-    if (input.categoryId !== undefined && currentTicket.categoryId !== input.categoryId) {
+    if (
+      input.categoryId !== undefined &&
+      currentTicket.categoryId !== input.categoryId
+    ) {
       await writeTicketEvent({
         ticketId: id,
         type: TICKET_EVENT_TYPES.CATEGORY_CHANGED,
-        actorId: context.actorId,
+        actorId: principal.subject,
         oldValue: currentTicket.categoryId,
         newValue: input.categoryId,
       });
@@ -150,32 +242,52 @@ export const ticketService = {
       await writeTicketEvent({
         ticketId: id,
         type: TICKET_EVENT_TYPES.UPDATED,
-        actorId: context.actorId,
+        actorId: principal.subject,
         metadata: {
           changes,
         },
       });
     }
 
-    return ticketSerializer.detail(updatedTicket);
+    return ticketSerializer.detail(updatedTicket, {
+      role: getTicketSerializerRole(principal),
+    });
   },
 
   async changeStatus(
     id: string,
     input: ChangeStatusInput,
-    context: ActorContext = {},
+    principal: AuthenticatedPrincipal,
   ) {
-    const currentTicket = await ticketRepository.findById(id);
+    const currentTicket =
+      await ticketRepository.findById(id);
+
     ensureTicketExists(currentTicket);
 
-    const currentStatus = currentTicket.status as TicketStatus;
+    ensureAuthorized(
+      canManageTicketWorkflow(
+        principal,
+        currentTicket,
+      ),
+      "You cannot change this ticket's status.",
+    );
+
+    const currentStatus =
+      currentTicket.status as TicketStatus;
+
     const nextStatus = input.status;
 
     if (currentStatus === nextStatus) {
-      return ticketSerializer.detail(currentTicket);
+      return ticketSerializer.detail(
+        currentTicket,
+        {
+          role: getTicketSerializerRole(principal),
+        },
+      );
     }
 
-    const allowedNextStatuses = ALLOWED_STATUS_TRANSITIONS[currentStatus] ?? [];
+    const allowedNextStatuses =
+      ALLOWED_STATUS_TRANSITIONS[currentStatus] ?? [];
 
     if (!allowedNextStatuses.includes(nextStatus)) {
       throw new TicketServiceError(
@@ -194,16 +306,21 @@ export const ticketService = {
 
     const isResolving = nextStatus === "RESOLVED";
     const isClosing = nextStatus === "CLOSED";
+
     const isReopening =
-      (currentStatus === "CLOSED" || currentStatus === "RESOLVED") &&
-      (nextStatus === "OPEN" || nextStatus === "IN_PROGRESS");
+      (currentStatus === "CLOSED" ||
+        currentStatus === "RESOLVED") &&
+      (nextStatus === "OPEN" ||
+        nextStatus === "IN_PROGRESS");
 
     if (isResolving) {
-      statusUpdate.resolvedAt = currentTicket.resolvedAt ?? new Date();
+      statusUpdate.resolvedAt =
+        currentTicket.resolvedAt ?? new Date();
     }
 
     if (isClosing) {
-      statusUpdate.closedAt = currentTicket.closedAt ?? new Date();
+      statusUpdate.closedAt =
+        currentTicket.closedAt ?? new Date();
 
       if (!currentTicket.resolvedAt) {
         statusUpdate.resolvedAt = new Date();
@@ -215,7 +332,11 @@ export const ticketService = {
       statusUpdate.resolvedAt = null;
     }
 
-    const updatedTicket = await ticketRepository.updateStatus(id, statusUpdate);
+    const updatedTicket =
+      await ticketRepository.updateStatus(
+        id,
+        statusUpdate,
+      );
 
     const eventType = isClosing
       ? TICKET_EVENT_TYPES.CLOSED
@@ -228,7 +349,7 @@ export const ticketService = {
     await writeTicketEvent({
       ticketId: id,
       type: eventType,
-      actorId: context.actorId,
+      actorId: principal.subject,
       oldValue: currentStatus,
       newValue: nextStatus,
       metadata: {
@@ -237,82 +358,146 @@ export const ticketService = {
       },
     });
 
-    return ticketSerializer.detail(updatedTicket);
+    return ticketSerializer.detail(updatedTicket, {
+      role: getTicketSerializerRole(principal),
+    });
   },
 
   async assignTicket(
     id: string,
     input: AssignTicketInput,
-    context: ActorContext = {},
+    principal: AuthenticatedPrincipal,
   ) {
-    const currentTicket = await ticketRepository.findById(id);
+    const currentTicket =
+      await ticketRepository.findById(id);
+
     ensureTicketExists(currentTicket);
 
-    if (currentTicket.assigneeId === input.assigneeId) {
-      return ticketSerializer.detail(currentTicket);
+    ensureAuthorized(
+      canManageTicketWorkflow(
+        principal,
+        currentTicket,
+      ),
+      "You cannot assign this ticket.",
+    );
+
+    if (
+      currentTicket.assigneeId ===
+      input.assigneeId
+    ) {
+      return ticketSerializer.detail(
+        currentTicket,
+        {
+          role: getTicketSerializerRole(principal),
+        },
+      );
     }
 
-    const updatedTicket = await ticketRepository.assign(id, input);
+    const updatedTicket =
+      await ticketRepository.assign(id, input);
 
     await writeTicketEvent({
       ticketId: id,
       type: input.assigneeId
         ? TICKET_EVENT_TYPES.ASSIGNED
         : TICKET_EVENT_TYPES.UNASSIGNED,
-      actorId: context.actorId,
+      actorId: principal.subject,
       oldValue: currentTicket.assigneeId,
       newValue: input.assigneeId ?? null,
     });
 
-    return ticketSerializer.detail(updatedTicket);
+    return ticketSerializer.detail(updatedTicket, {
+      role: getTicketSerializerRole(principal),
+    });
   },
 
   async changePriority(
     id: string,
     input: ChangePriorityInput,
-    context: ActorContext = {},
+    principal: AuthenticatedPrincipal,
   ) {
-    const currentTicket = await ticketRepository.findById(id);
+    const currentTicket =
+      await ticketRepository.findById(id);
+
     ensureTicketExists(currentTicket);
 
-    if (currentTicket.priority === input.priority) {
-      return ticketSerializer.detail(currentTicket);
+    ensureAuthorized(
+      canManageTicketWorkflow(
+        principal,
+        currentTicket,
+      ),
+      "You cannot change this ticket's priority.",
+    );
+
+    if (
+      currentTicket.priority === input.priority
+    ) {
+      return ticketSerializer.detail(
+        currentTicket,
+        {
+          role: getTicketSerializerRole(principal),
+        },
+      );
     }
 
-    const updatedTicket = await ticketRepository.updatePriority(id, input.priority);
+    const updatedTicket =
+      await ticketRepository.updatePriority(
+        id,
+        input.priority,
+      );
 
     await writeTicketEvent({
       ticketId: id,
       type: TICKET_EVENT_TYPES.PRIORITY_CHANGED,
-      actorId: context.actorId,
+      actorId: principal.subject,
       oldValue: currentTicket.priority,
       newValue: input.priority,
     });
 
-    return ticketSerializer.detail(updatedTicket);
+    return ticketSerializer.detail(updatedTicket, {
+      role: getTicketSerializerRole(principal),
+    });
   },
 
-  async deleteTicket(id: string, context: ActorContext = {}) {
-    const currentTicket = await ticketRepository.findById(id);
+  async deleteTicket(
+    id: string,
+    principal: AuthenticatedPrincipal,
+  ) {
+    const currentTicket =
+      await ticketRepository.findById(id);
+
     ensureTicketExists(currentTicket);
 
-    const cancelledTicket = await ticketRepository.markAsCancelled(id);
+    ensureAuthorized(
+      canCancelTicket(principal, currentTicket),
+      "You cannot cancel this ticket.",
+    );
+
+    const cancelledTicket =
+      await ticketRepository.markAsCancelled(id);
 
     await writeTicketEvent({
       ticketId: id,
       type: TICKET_EVENT_TYPES.STATUS_CHANGED,
-      actorId: context.actorId,
+      actorId: principal.subject,
       oldValue: currentTicket.status,
       newValue: "CANCELLED",
       metadata: {
         action: "SAFE_DELETE",
-        reason: "No deletedAt field exists in the current Prisma schema.",
+        reason:
+          "No deletedAt field exists in the current Prisma schema.",
       },
     });
 
     return {
-      message: "Ticket cancelled successfully. This is the safe delete behavior for the current schema.",
-      data: ticketSerializer.detail(cancelledTicket),
+      message:
+        "Ticket cancelled successfully. This is the safe delete behavior for the current schema.",
+      data: ticketSerializer.detail(
+        cancelledTicket,
+        {
+          role: getTicketSerializerRole(principal),
+        },
+      ),
     };
   },
 };

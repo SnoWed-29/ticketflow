@@ -1,6 +1,10 @@
 import { Router } from "express";
+
+import { requireRoles } from "../../middlewares/requireRoles.js";
 import { validateRequest } from "../../middlewares/validateRequest.js";
+
 import { ticketController } from "./ticket.controller.js";
+
 import {
   assignTicketBodySchema,
   changeTicketPriorityBodySchema,
@@ -16,6 +20,12 @@ const router = Router();
 
 router.post(
   "/",
+  requireRoles(
+    "ticket_user",
+    "ticket_agent",
+    "ticket_manager",
+    "ticket_admin",
+  ),
   validateRequest({
     body: createTicketBodySchema,
   }),
@@ -50,6 +60,11 @@ router.patch(
 
 router.patch(
   "/:id/status",
+  requireRoles(
+    "ticket_agent",
+    "ticket_manager",
+    "ticket_admin",
+  ),
   validateRequest({
     params: ticketIdParamSchema,
     body: changeTicketStatusBodySchema,
@@ -59,6 +74,11 @@ router.patch(
 
 router.patch(
   "/:id/assign",
+  requireRoles(
+    "ticket_agent",
+    "ticket_manager",
+    "ticket_admin",
+  ),
   validateRequest({
     params: ticketIdParamSchema,
     body: assignTicketBodySchema,
@@ -68,6 +88,11 @@ router.patch(
 
 router.patch(
   "/:id/priority",
+  requireRoles(
+    "ticket_agent",
+    "ticket_manager",
+    "ticket_admin",
+  ),
   validateRequest({
     params: ticketIdParamSchema,
     body: changeTicketPriorityBodySchema,
