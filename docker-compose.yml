@@ -50,7 +50,7 @@ services:
     container_name: ticketflow-keycloak
     restart: unless-stopped
 
-    command: ["start-dev", "--import-realm"]
+    command: start-dev --import-realm
 
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME}
@@ -63,6 +63,7 @@ services:
 
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
+      KEYCLOAK_TICKETFLOW_API_SECRET: ${KEYCLOAK_TICKETFLOW_API_SECRET}
 
     ports:
       - "${KEYCLOAK_PORT}:8080"
