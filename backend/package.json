@@ -4,13 +4,13 @@
   "description": "",
   "main": "dist/server.js",
   "scripts": {
-    "build": "prisma generate && tsc",
-    "prisma:generate": "prisma generate",
-    "start": "tsx src/server.ts",
-    "start:prod": "node dist/server.js",
     "dev": "tsx watch src/server.ts",
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "typecheck": "prisma generate && tsc --noEmit"
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "prisma:seed": "prisma db seed"
   },
   "keywords": [],
   "author": "",
@@ -20,8 +20,6 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.1.0",
     "@types/pg": "^8.20.0",
-    "prisma": "^7.8.0",
-    "tsx": "^4.23.0",
     "typescript": "^6.0.3"
   },
   "dependencies": {
@@ -31,6 +29,8 @@
     "express": "^5.2.1",
     "jose": "^6.2.3",
     "pg": "^8.22.0",
+    "prisma": "^7.8.0",
+    "tsx": "^4.23.0",
     "zod": "^4.4.3"
   }
 }
