@@ -7,6 +7,8 @@ import {
   ticketService,
   TicketServiceError,
 } from "./ticket.service.js";
+import { isSupportStaff } from "./ticket.authorization.js";
+import { getCachedTicketCounts } from "./ticket-stats.cache.js";
 
 import type {
   AssignTicketInput,
@@ -49,6 +51,26 @@ const handleError = (
 };
 
 export const ticketController = {
+  async stats(request: Request, response: Response) {
+    try {
+      const principal =
+        getAuthenticatedPrincipal(request);
+      const supportStaff = isSupportStaff(principal);
+      const scopeKey = supportStaff
+        ? "global"
+        : `requester:${principal.subject}`;
+
+      const result = await getCachedTicketCounts(
+        scopeKey,
+        supportStaff ? undefined : principal.subject,
+      );
+
+      sendSuccess(response, { data: result });
+    } catch (error) {
+      handleError(error, response);
+    }
+  },
+
   async create(request: Request, response: Response) {
     try {
       const principal =
