@@ -1,199 +1,253 @@
+import type { AuthenticatedPrincipal } from "../auth/auth.types.js";
+
+import { writeTicketEvent } from "../tickets/ticket-event.writer.js";
+import { TICKET_EVENT_TYPES } from "../tickets/ticket.constants.js";
+
 import {
-    SUPPORT_ROLES,
-    USER_ROLES,
-    type UserRole
-}  from "./comment.constants";
-import { commentHook } from "./comment.hooks";
-import { commentRepository } from "./comment.repository";
-import { commentSerializer } from "./comment.serializer";
+  canCreateInternalNote,
+  canEditOrDeleteComment,
+  canReadComment,
+  canReadComments,
+} from "./comment.authorization.js";
+
+import { isSupportStaff } from "../tickets/ticket.authorization.js";
+
+import { commentHook } from "./comment.hooks.js";
+import { commentRepository } from "./comment.repository.js";
+import { commentSerializer } from "./comment.serializer.js";
+
 import type {
-    CreateCommentInput,
-    UpdateCommentInput,
-} from "./comment.schema";
-import { writeTicketEvent } from "../tickets/ticket-event.writer";
-import { TICKET_EVENT_TYPES } from "../tickets/ticket.constants";
+  CreateCommentInput,
+  UpdateCommentInput,
+} from "./comment.schema.js";
 
 export class CommentServiceError extends Error {
-    statusCode: number;
+  statusCode: number;
 
-    constructor(statusCode: number,message: string){
-        super(message);
-        this.statusCode = statusCode;
-    }
+  constructor(
+    statusCode: number,
+    message: string,
+  ) {
+    super(message);
+    this.statusCode = statusCode;
+  }
 }
 
-type ActorContext = {
-    actorId?: string | null;
-    role: UserRole;
-}
-
-const isSupportRole = (role: UserRole): boolean => {
-    return SUPPORT_ROLES.includes(role as any);
-}
-
-const canManageAnyComment = (role: UserRole): boolean => {
-    return role === USER_ROLES.MANAGER || role === USER_ROLES.ADMIN;
-}
-
-const ensureActor = (context: ActorContext): string => {
-    if (!context.actorId){
-        throw new CommentServiceError(
-            400,
-            "x-user-id is required until auth is implemented"
-        );
-    }
-    return context.actorId;
-}
-
-const ensureTicketVisibleToActor = (ticket: any,context: ActorContext) => {
-    if(!ticket){
-        throw new CommentServiceError(404, "ticket not found")
-    }
-
-    if(isSupportRole(context.role)){
-        return;
-    }
-
-    if(ticket.requesterId !== context.actorId) {
-        throw new CommentServiceError(403, "you cannot access this ticket")
-    }
-}
-
-const ensureCommentVisibleToActor = (comment: any, context: ActorContext) => {
-    if(!comment){
-        throw new CommentServiceError(404, "comment not found")
-    }
-
-    ensureTicketVisibleToActor(comment.ticket, context)
-
-    if(comment.isInternalNote && !isSupportRole(context.role)){
-        throw new CommentServiceError(404, "comment not found")
-    }
-}
-
-const ensureCanEditOrDeleteComment = (comment: any, context:ActorContext) => {
-    ensureCommentVisibleToActor(comment, context);
-
-    if(canManageAnyComment(context.role)) {
-        return;
-    }
-
-    if(comment.authorId === context.actorId){
-        return;
-    }
-
+function ensureTicketExists<T>(
+  ticket: T | null | undefined,
+): asserts ticket is NonNullable<T> {
+  if (!ticket) {
     throw new CommentServiceError(
-        403, 
-        "you are not allowed to edit or delete this comment"
+      404,
+      "Ticket not found.",
     );
+  }
+}
+
+function ensureCommentExists<T>(
+  comment: T | null | undefined,
+): asserts comment is NonNullable<T> {
+  if (!comment) {
+    throw new CommentServiceError(
+      404,
+      "Comment not found.",
+    );
+  }
+}
+
+function ensureAuthorized(
+  authorized: boolean,
+  message: string,
+): void {
+  if (!authorized) {
+    throw new CommentServiceError(403, message);
+  }
 }
 
 export const commentService = {
-    async createComment(
-        ticketId: string,
-        input: CreateCommentInput,
-        context: ActorContext
+  async createComment(
+    ticketId: string,
+    input: CreateCommentInput,
+    principal: AuthenticatedPrincipal,
+  ) {
+    const ticket =
+      await commentRepository.findTicketById(
+        ticketId,
+      );
+
+    ensureTicketExists(ticket);
+
+    ensureAuthorized(
+      canReadComments(principal, ticket),
+      "You cannot access this ticket.",
+    );
+
+    const isInternalNote =
+      input.isInternalNote ?? false;
+
+    if (
+      isInternalNote &&
+      !canCreateInternalNote(principal)
     ) {
-        const actorId = ensureActor(context);
-        const ticket = await commentRepository.findTicketById(ticketId)
-
-        ensureTicketVisibleToActor(ticket, context);
-
-        const isInternalNote = input.isInternalNote ?? false;
-
-        if(isInternalNote && !isSupportRole(context.role)) {
-            throw new CommentServiceError(
-                403,
-                "Only agents, managers, and admins can add internal notes.",
-            );
-        }
-        
-        const comment = await commentRepository.create({
-            ticketId,
-            authorId: actorId,
-            content: input.content,
-            isInternalNote
-        });
-
-        await writeTicketEvent({
-            ticketId,
-            type: TICKET_EVENT_TYPES.COMMENT_ADDED,
-            actorId,
-            metadata: {
-                commentId: comment.id,
-                isInternalNote,
-            }
-        });
-
-        await commentHook.afterCommentCreated({
-            ticketId,
-            commentId: comment.id,
-            actorId,
-            isInternalNote,
-        });
-
-        return commentSerializer.item(comment, {
-            includeInternalFlag: isSupportRole(context.role)
-        });
-    },
-
-    async listComments(ticketId: string,context: ActorContext) {
-        ensureActor(context);
-
-        const ticket = await commentRepository.findTicketById(ticketId);
-        ensureTicketVisibleToActor(ticket, context)
-
-        const includeInternalNotes = isSupportRole(context.role)
-
-        const comments = await commentRepository.findManyByTicket({
-            ticketId,
-            includeInternalNotes,
-        });
-
-        return commentSerializer.list(comments, {
-            includeInternalFlag: includeInternalNotes,
-        })
-    },
-
-    async updateComment(
-        commentId: string,
-        input: UpdateCommentInput,
-        context: ActorContext
-    ) {
-        const comment = await commentRepository.findById(commentId)
-        const actorId = ensureActor(context);
-        ensureCanEditOrDeleteComment(comment, context)
-
-        const updatedComment = await commentRepository.update(commentId, input);
-
-        await commentHook.afterCommentUpdated({
-            ticketId: updatedComment.ticketId,
-            commentId: commentId,
-            actorId,
-            isInternalNote: updatedComment.isInternalNote
-        });
-
-        return commentSerializer.item(updatedComment, {
-            includeInternalFlag: isSupportRole(context.role)
-        })
-    },
-
-    async deleteComment(commentId: string, context: ActorContext) {
-        const actorId = ensureActor(context);
-        const comment = await commentRepository.findById(commentId)
-        ensureCanEditOrDeleteComment(comment, context)
-
-        const deletedComment = await commentRepository.softDelete(commentId)
-
-        await commentHook.afterCommentDeleted({
-            ticketId: deletedComment.ticketId,
-            commentId: deletedComment.id,
-            actorId,
-            isInternalNote: deletedComment.isInternalNote
-        });
-
-        return {
-            message: "Comment deleted successfully",
-        };
+      throw new CommentServiceError(
+        403,
+        "Only agents, managers, and admins can add internal notes.",
+      );
     }
-}
+
+    const comment =
+      await commentRepository.create({
+        ticketId,
+        authorId: principal.subject,
+        content: input.content,
+        isInternalNote,
+      });
+
+    await writeTicketEvent({
+      ticketId,
+      type: TICKET_EVENT_TYPES.COMMENT_ADDED,
+      actorId: principal.subject,
+      metadata: {
+        commentId: comment.id,
+        isInternalNote,
+      },
+    });
+
+    await commentHook.afterCommentCreated({
+      ticketId,
+      commentId: comment.id,
+      actorId: principal.subject,
+      isInternalNote,
+    });
+
+    return commentSerializer.item(comment, {
+      includeInternalFlag:
+        isSupportStaff(principal),
+    });
+  },
+
+  async listComments(
+    ticketId: string,
+    principal: AuthenticatedPrincipal,
+  ) {
+    const ticket =
+      await commentRepository.findTicketById(
+        ticketId,
+      );
+
+    ensureTicketExists(ticket);
+
+    ensureAuthorized(
+      canReadComments(principal, ticket),
+      "You cannot access this ticket.",
+    );
+
+    const includeInternalNotes =
+      isSupportStaff(principal);
+
+    const comments =
+      await commentRepository.findManyByTicket({
+        ticketId,
+        includeInternalNotes,
+      });
+
+    return commentSerializer.list(comments, {
+      includeInternalFlag:
+        includeInternalNotes,
+    });
+  },
+
+  async updateComment(
+    commentId: string,
+    input: UpdateCommentInput,
+    principal: AuthenticatedPrincipal,
+  ) {
+    const comment =
+      await commentRepository.findById(commentId);
+
+    ensureCommentExists(comment);
+
+    /*
+     * Returning 404 for invisible internal notes avoids
+     * disclosing that the note exists.
+     */
+    if (!canReadComment(principal, comment)) {
+      throw new CommentServiceError(
+        404,
+        "Comment not found.",
+      );
+    }
+
+    ensureAuthorized(
+      canEditOrDeleteComment(
+        principal,
+        comment,
+      ),
+      "You are not allowed to update this comment.",
+    );
+
+    const updatedComment =
+      await commentRepository.update(
+        commentId,
+        input,
+      );
+
+    await commentHook.afterCommentUpdated({
+      ticketId: updatedComment.ticketId,
+      commentId,
+      actorId: principal.subject,
+      isInternalNote:
+        updatedComment.isInternalNote,
+    });
+
+    return commentSerializer.item(
+      updatedComment,
+      {
+        includeInternalFlag:
+          isSupportStaff(principal),
+      },
+    );
+  },
+
+  async deleteComment(
+    commentId: string,
+    principal: AuthenticatedPrincipal,
+  ) {
+    const comment =
+      await commentRepository.findById(commentId);
+
+    ensureCommentExists(comment);
+
+    if (!canReadComment(principal, comment)) {
+      throw new CommentServiceError(
+        404,
+        "Comment not found.",
+      );
+    }
+
+    ensureAuthorized(
+      canEditOrDeleteComment(
+        principal,
+        comment,
+      ),
+      "You are not allowed to delete this comment.",
+    );
+
+    const deletedComment =
+      await commentRepository.softDelete(
+        commentId,
+      );
+
+    await commentHook.afterCommentDeleted({
+      ticketId: deletedComment.ticketId,
+      commentId: deletedComment.id,
+      actorId: principal.subject,
+      isInternalNote:
+        deletedComment.isInternalNote,
+    });
+
+    return {
+      message: "Comment deleted successfully.",
+    };
+  },
+};

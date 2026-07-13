@@ -1,131 +1,163 @@
 import type { Request, Response } from "express";
+
+import { getAuthenticatedPrincipal } from "../auth/auth-context.js";
+import { sendError, sendSuccess } from "../../utils/apiResponse.js";
+
 import {
-    commentService,
-    CommentServiceError,
-} from "./comment.service";
-import { USER_ROLES, type UserRole } from "./comment.constants";
-import { sendError, sendSuccess } from "../../utils/apiResponse";
+  commentService,
+  CommentServiceError,
+} from "./comment.service.js";
+
 import type {
-    CommentIdParams,
-    CreateCommentInput,
-    TicketIdParams,
-    UpdateCommentInput,
-} from "./comment.schema";
+  CommentIdParams,
+  CreateCommentInput,
+  TicketIdParams,
+  UpdateCommentInput,
+} from "./comment.schema.js";
 
 const getValidated = <T>(
-    res: Response,
-    key: "body" | "params" | "query",
+  response: Response,
+  key: "body" | "params" | "query",
 ): T => {
-    return res.locals.validated?.[key] as T;
+  return response.locals.validated?.[key] as T;
 };
 
-const getActorId = (req: Request): string | null => {
-    const actorId = req.header("x-user-id");
+const handleError = (
+  error: unknown,
+  response: Response,
+): void => {
+  if (error instanceof CommentServiceError) {
+    sendError(
+      response,
+      error.statusCode,
+      error.message,
+    );
+    return;
+  }
 
-    if(actorId && actorId.trim().length > 0) {
-        return actorId;
-    }
+  console.error(error);
 
-    return null;
+  sendError(
+    response,
+    500,
+    "Internal server error.",
+  );
 };
-
-const getRole = (req: Request): UserRole => {
-    const role = req.header("x-user-role")?.toUpperCase();
-
-    if(
-        role === USER_ROLES.AGENT ||
-        role === USER_ROLES.ADMIN ||
-        role === USER_ROLES.MANAGER
-    ){
-        return role
-    }
-    return USER_ROLES.USER
-
-}
-
-const getActorContext = (req: Request) => {
-    return {
-        actorId: getActorId(req),
-        role: getRole(req)
-    }
-}
-
-const handleError = (error: unknown, res: Response) => {
-    if(error instanceof CommentServiceError){
-        sendError(res, error.statusCode, error.message);
-        return;
-    }
-    console.log(error);
-    sendError(res, 500, "internal server error");
-}
 
 export const commentController = {
-    async create(req: Request, res: Response) {
-        try {
-           const params = getValidated<TicketIdParams>(res, "params");
-           const body = getValidated<CreateCommentInput>(res, "body");
+  async create(request: Request, response: Response) {
+    try {
+      const principal =
+        getAuthenticatedPrincipal(request);
 
-           const results = await commentService.createComment(
-            params.ticketId,
-            body,
-            getActorContext(req)
-           );
-           sendSuccess(res, {
-            statusCode: 201,
-            message: "Comment created Successfully",
-            data: results
-           })
-        } catch (error) {
-            handleError(error, res)
-        }
-    },
+      const params =
+        getValidated<TicketIdParams>(
+          response,
+          "params",
+        );
 
-    async listByTicket(req: Request, res: Response) {
-        try {
-            const params = getValidated<TicketIdParams>(res, "params");
+      const body =
+        getValidated<CreateCommentInput>(
+          response,
+          "body",
+        );
 
-            const result = await commentService.listComments(
-                params.ticketId,
-                getActorContext(req)
-            );
-            sendSuccess(res, result);
-        }catch (error) {
-            handleError(error, res)
-        }
-    },
+      const result =
+        await commentService.createComment(
+          params.ticketId,
+          body,
+          principal,
+        );
 
-    async update(req: Request, res: Response) {
-        try{
-            const params = getValidated<CommentIdParams>(res, "params");
-            const body = getValidated<UpdateCommentInput>(res, "body");
-
-            const result = await commentService.updateComment(
-                params.commentId,
-                body,
-                getActorContext(req)
-            );
-
-            sendSuccess(res, {
-                message: "comment has been updated",
-                data: result
-            });
-        }catch (error){
-            handleError(error, res)
-        }
-    },
-
-    async remove (req: Request, res: Response){
-        try{
-            const params = getValidated<CommentIdParams>(res, "params");
-
-            const result = await commentService.deleteComment(
-                params.commentId,
-                getActorContext(req)
-            );
-
-            sendSuccess(res, result)
-        }catch (error){
-            handleError(error, res)
-        }
+      sendSuccess(response, {
+        statusCode: 201,
+        message: "Comment created successfully.",
+        data: result,
+      });
+    } catch (error) {
+      handleError(error, response);
     }
-}
+  },
+
+  async listByTicket(
+    request: Request,
+    response: Response,
+  ) {
+    try {
+      const principal =
+        getAuthenticatedPrincipal(request);
+
+      const params =
+        getValidated<TicketIdParams>(
+          response,
+          "params",
+        );
+
+      const result =
+        await commentService.listComments(
+          params.ticketId,
+          principal,
+        );
+
+      sendSuccess(response, result);
+    } catch (error) {
+      handleError(error, response);
+    }
+  },
+
+  async update(request: Request, response: Response) {
+    try {
+      const principal =
+        getAuthenticatedPrincipal(request);
+
+      const params =
+        getValidated<CommentIdParams>(
+          response,
+          "params",
+        );
+
+      const body =
+        getValidated<UpdateCommentInput>(
+          response,
+          "body",
+        );
+
+      const result =
+        await commentService.updateComment(
+          params.commentId,
+          body,
+          principal,
+        );
+
+      sendSuccess(response, {
+        message: "Comment has been updated.",
+        data: result,
+      });
+    } catch (error) {
+      handleError(error, response);
+    }
+  },
+
+  async remove(request: Request, response: Response) {
+    try {
+      const principal =
+        getAuthenticatedPrincipal(request);
+
+      const params =
+        getValidated<CommentIdParams>(
+          response,
+          "params",
+        );
+
+      const result =
+        await commentService.deleteComment(
+          params.commentId,
+          principal,
+        );
+
+      sendSuccess(response, result);
+    } catch (error) {
+      handleError(error, response);
+    }
+  },
+};

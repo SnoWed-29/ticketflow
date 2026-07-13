@@ -75,7 +75,11 @@ const buildTicketWhere = (query: TicketListQuery) => {
 };
 
 export const ticketRepository = {
-  async create(input: CreateTicketInput & { requesterId: string }) {
+  async create(
+    input: Omit<CreateTicketInput, "requesterId"> & {
+      requesterId: string
+    }
+  ) {
     return prisma.ticket.create({
       data: {
         title: input.title.trim(),

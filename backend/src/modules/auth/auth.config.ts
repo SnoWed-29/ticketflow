@@ -1,11 +1,11 @@
-import { boolean, z } from "zod";
+import { z } from "zod";
 
 import type { KeycloakAuthConfig } from "./auth.types";
 
-const keycloakEnviromentSchema = z.object({
-    KEYCLOAK_ISSUER: z
+const keycloakEnvironmentSchema = z.object({
+    KEYCLOAK_ISSUER_URL: z
         .string()
-        .url("KEYCLOACK_ISSUER must be a valid URL"),
+        .url("KEYCLOAK_ISSUER_URL must be a valid URL"),
 
     KEYCLOAK_JWKS_URL: z
         .string()
@@ -24,12 +24,12 @@ const keycloakEnviromentSchema = z.object({
 
 
 export function getKeycloakAuthConfig(): KeycloakAuthConfig {
-    const enviroment = keycloakEnviromentSchema.parse(process.env);
+    const environment = keycloakEnvironmentSchema.parse(process.env);
 
-    const allowedClients = enviroment.KEYCLOAK_ALLOWED_CLIENTS
+    const allowedClients = environment.KEYCLOAK_ALLOWED_CLIENTS
         .split(",")
         .map((client) => client.trim())
-        .filter(boolean);
+        .filter((client) => client.length > 0);
 
     if(allowedClients.length === 0 ) {
         throw new Error(
@@ -38,9 +38,9 @@ export function getKeycloakAuthConfig(): KeycloakAuthConfig {
     }
 
     return {
-        issuer: enviroment.KEYCLOAK_ISSUER,
-        jwksUrl: enviroment.KEYCLOAK_JWKS_URL,
-        audience: enviroment.KEYCLOAK_AUDIENCE,
+        issuer: environment.KEYCLOAK_ISSUER_URL,
+        jwksUrl: environment.KEYCLOAK_JWKS_URL,
+        audience: environment.KEYCLOAK_AUDIENCE,
         allowedClients
     };
 }

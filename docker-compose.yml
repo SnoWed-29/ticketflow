@@ -1,16 +1,25 @@
+name: ticketflow
+
 services:
+  # ─────────────────────────────────────────────────────────────
+  # TicketFlow database
+  # ─────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: ticketflow-postgres
     restart: unless-stopped
+
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-ticketflow}
       POSTGRES_USER: ${POSTGRES_USER:-ticketflow}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ticketflow_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
     healthcheck:
       test:
         [
@@ -21,52 +30,112 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-  
+
+    networks:
+      - ticketflow-network
+
+  # ─────────────────────────────────────────────────────────────
+  # Redis
+  # ─────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ticketflow-redis
+    restart: unless-stopped
+
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "REDISCLI_AUTH=\"$${REDIS_PASSWORD}\" redis-cli ping | grep -q PONG"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
+
+    networks:
+      - ticketflow-network
+
+  # ─────────────────────────────────────────────────────────────
+  # Keycloak database
+  # ─────────────────────────────────────────────────────────────
   keycloak-db:
     image: postgres:17-alpine
     container_name: ticketflow-keycloak-db
     restart: unless-stopped
 
     environment:
-      POSTGRES_DB: ${KEYCLOAK_DB_NAME}
-      POSTGRES_USER: ${KEYCLOAK_DB_USER}
-      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      POSTGRES_DB: ${KEYCLOAK_DB_NAME:-keycloak}
+      POSTGRES_USER: ${KEYCLOAK_DB_USER:-keycloak}
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD in .env}
 
     volumes:
-      - keycloak-db-data:/var/lib/postgresql/data
+      - keycloak_db_data:/var/lib/postgresql/data
 
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${KEYCLOAK_DB_USER} -d ${KEYCLOAK_DB_NAME}",
+          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"
         ]
       interval: 5s
       timeout: 5s
-      
       retries: 10
+      start_period: 10s
+
+    networks:
+      - ticketflow-network
+
+  # ─────────────────────────────────────────────────────────────
+  # Keycloak
+  # ─────────────────────────────────────────────────────────────
   keycloak:
-    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION:-26.7.0}
     container_name: ticketflow-keycloak
     restart: unless-stopped
 
-    command: start-dev --import-realm
+    command:
+      - start-dev
+      - --import-realm
+      - --http-relative-path=/keycloak
 
     environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME}
-      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
 
       KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/${KEYCLOAK_DB_NAME}
-      KC_DB_USERNAME: ${KEYCLOAK_DB_USER}
-      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/${KEYCLOAK_DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${KEYCLOAK_DB_USER:-keycloak}
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD in .env}
+
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8080/keycloak}
+      KC_HOSTNAME_STRICT: "false"
 
       KC_HEALTH_ENABLED: "true"
       KC_METRICS_ENABLED: "true"
-      KEYCLOAK_TICKETFLOW_API_SECRET: ${KEYCLOAK_TICKETFLOW_API_SECRET}
+
+      KEYCLOAK_TICKETFLOW_API_SECRET: ${KEYCLOAK_TICKETFLOW_API_SECRET:?Set KEYCLOAK_TICKETFLOW_API_SECRET in .env}
 
     ports:
-      - "${KEYCLOAK_PORT}:8080"
+      - "${KEYCLOAK_DIRECT_PORT:-8081}:8080"
+      - "${KEYCLOAK_MANAGEMENT_PORT:-9000}:9000"
 
     volumes:
       - ./keycloak/import:/opt/keycloak/data/import:ro
@@ -75,7 +144,270 @@ services:
       keycloak-db:
         condition: service_healthy
 
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bash",
+          "-ec",
+          "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /keycloak/health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -q 'HTTP/1.1 200' <&3"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+    networks:
+      - ticketflow-network
+
+  # ─────────────────────────────────────────────────────────────
+  # Backend API
+  # ─────────────────────────────────────────────────────────────
+  backend-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+    container_name: ticketflow-backend-api
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 5000
+      HOST: 0.0.0.0
+
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ticketflow}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-ticketflow}?schema=public
+
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379
+
+      # The value expected in the token's `iss` claim.
+      KEYCLOAK_ISSUER_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8080/keycloak}/realms/${KEYCLOAK_REALM:-ticketflow}
+
+      # Used by the backend container to download Keycloak public keys.
+      KEYCLOAK_JWKS_URL: http://keycloak:8080/keycloak/realms/${KEYCLOAK_REALM:-ticketflow}/protocol/openid-connect/certs
+      KEYCLOAK_AUDIENCE: ${KEYCLOAK_AUDIENCE:-ticketflow-api}
+      KEYCLOAK_ALLOWED_CLIENTS: ${KEYCLOAK_ALLOWED_CLIENTS:-ticketflow-frontend}
+
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_MASTER_KEY: ${MEILISEARCH_MASTER_KEY:?Set MEILISEARCH_MASTER_KEY in .env}
+
+      OTEL_SERVICE_NAME: ticketflow-backend
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+
+    # Expose directly only for debugging.
+    ports:
+      - "${BACKEND_DIRECT_PORT:-5000}:5000"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      meilisearch:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:5000/health').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    networks:
+      - ticketflow-network
+
+  # ─────────────────────────────────────────────────────────────
+  # Worker placeholder
+  # ─────────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+
+    container_name: ticketflow-worker
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+
+      DATABASE_URL: postgresql://${POSTGRES_USER:-ticketflow}:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-ticketflow}?schema=public
+
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379
+
+      MEILISEARCH_URL: http://meilisearch:7700
+      MEILISEARCH_MASTER_KEY: ${MEILISEARCH_MASTER_KEY:?Set MEILISEARCH_MASTER_KEY in .env}
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    networks:
+      - ticketflow-network
+
+  # ─────────────────────────────────────────────────────────────
+  # Meilisearch
+  # ─────────────────────────────────────────────────────────────
+  meilisearch:
+    image: getmeili/meilisearch:${MEILISEARCH_VERSION:-v1.15}
+    container_name: ticketflow-meilisearch
+    restart: unless-stopped
+
+    environment:
+      MEILI_ENV: development
+      MEILI_MASTER_KEY: ${MEILISEARCH_MASTER_KEY:?Set MEILISEARCH_MASTER_KEY in .env}
+      MEILI_NO_ANALYTICS: "true"
+
+    ports:
+      - "${MEILISEARCH_PORT:-7700}:7700"
+
+    volumes:
+      - meilisearch_data:/meili_data
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:7700/health"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - ticketflow-network
+
+  # ─────────────────────────────────────────────────────────────
+  # NGINX gateway
+  # ─────────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ticketflow-nginx
+    restart: unless-stopped
+
+    ports:
+      - "${NGINX_PORT:-8080}:80"
+
+    volumes:
+      - ./api-gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+
+    depends_on:
+      backend-api:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1/gateway-health"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    networks:
+      - ticketflow-network
+
+  # ─────────────────────────────────────────────────────────────
+  # Prometheus
+  # ─────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:${PROMETHEUS_VERSION:-v3.4.1}
+    container_name: ticketflow-prometheus
+    restart: unless-stopped
+
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+    depends_on:
+      backend-api:
+        condition: service_healthy
+
+    networks:
+      - ticketflow-network
+
+  # ─────────────────────────────────────────────────────────────
+  # Grafana
+  # ─────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:${GRAFANA_VERSION:-12.0.2}
+    container_name: ticketflow-grafana
+    restart: unless-stopped
+
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+
+    depends_on:
+      - prometheus
+
+    networks:
+      - ticketflow-network
+
+  # ─────────────────────────────────────────────────────────────
+  # Jaeger
+  # ─────────────────────────────────────────────────────────────
+  jaeger:
+    image: jaegertracing/all-in-one:${JAEGER_VERSION:-1.70.0}
+    container_name: ticketflow-jaeger
+    restart: unless-stopped
+
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "${JAEGER_OTLP_GRPC_PORT:-4317}:4317"
+      - "${JAEGER_OTLP_HTTP_PORT:-4318}:4318"
+
+    networks:
+      - ticketflow-network
+
+networks:
+  ticketflow-network:
+    name: ticketflow-network
+    driver: bridge
 
 volumes:
-  keycloak-db-data:
   postgres_data:
+  redis_data:
+  keycloak_db_data:
+  meilisearch_data:
+  prometheus_data:
+  grafana_data:

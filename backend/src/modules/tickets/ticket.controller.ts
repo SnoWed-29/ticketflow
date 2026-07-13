@@ -1,6 +1,13 @@
 import type { Request, Response } from "express";
-import { sendError, sendSuccess } from "../../utils/apiResponse";
-import { ticketService, TicketServiceError } from "./ticket.service";
+
+import { getAuthenticatedPrincipal } from "../auth/auth-context.js";
+import { sendError, sendSuccess } from "../../utils/apiResponse.js";
+
+import {
+  ticketService,
+  TicketServiceError,
+} from "./ticket.service.js";
+
 import type {
   AssignTicketInput,
   ChangePriorityInput,
@@ -10,210 +17,286 @@ import type {
   TicketIdParams,
   TicketListQuery,
   UpdateTicketInput,
-} from "./ticket.schema";
-import type { TicketSerializerRole } from "./ticket.serializer";
+} from "./ticket.schema.js";
 
 const getValidated = <T>(
-  res: Response,
+  response: Response,
   key: "body" | "params" | "query",
 ): T => {
-  return res.locals.validated?.[key] as T;
+  return response.locals.validated?.[key] as T;
 };
 
-const getActorId = (req: Request): string | null => {
-  const actorId = req.header("x-user-id");
-
-  if (actorId && actorId.trim().length > 0) {
-    return actorId;
-  }
-
-  return null;
-};
-
-const getRole = (req: Request): TicketSerializerRole => {
-  const role = req.header("x-user-role")?.toUpperCase();
-
-  if (
-    role === "AGENT" ||
-    role === "MANAGER" ||
-    role === "ADMIN"
-  ) {
-    return role;
-  }
-
-  return "USER";
-};
-
-const getActorContext = (req: Request) => {
-  return {
-    actorId: getActorId(req),
-    role: getRole(req),
-  };
-};
-
-const handleError = (error: unknown, res: Response) => {
+const handleError = (
+  error: unknown,
+  response: Response,
+): void => {
   if (error instanceof TicketServiceError) {
-    sendError(res, error.statusCode, error.message);
+    sendError(
+      response,
+      error.statusCode,
+      error.message,
+    );
     return;
   }
 
   console.error(error);
 
-  sendError(res, 500, "Internal server error.");
+  sendError(
+    response,
+    500,
+    "Internal server error.",
+  );
 };
 
 export const ticketController = {
-  async create(req: Request, res: Response) {
+  async create(request: Request, response: Response) {
     try {
-      const body = getValidated<CreateTicketInput>(res, "body");
+      const principal =
+        getAuthenticatedPrincipal(request);
 
-      const result = await ticketService.createTicket(
-        body,
-        getActorContext(req),
-      );
+      const body =
+        getValidated<CreateTicketInput>(
+          response,
+          "body",
+        );
 
-      sendSuccess(res, {
+      const result =
+        await ticketService.createTicket(
+          body,
+          principal,
+        );
+
+      sendSuccess(response, {
         statusCode: 201,
         message: "Ticket created successfully.",
         data: result,
       });
     } catch (error) {
-      handleError(error, res);
+      handleError(error, response);
     }
   },
 
-  async list(req: Request, res: Response) {
+  async list(request: Request, response: Response) {
     try {
-      const query = getValidated<TicketListQuery>(res, "query");
+      const principal =
+        getAuthenticatedPrincipal(request);
 
-      const result = await ticketService.listTickets(
-        query,
-        getActorContext(req),
-      );
+      const query =
+        getValidated<TicketListQuery>(
+          response,
+          "query",
+        );
 
-      sendSuccess(res, {
+      const result =
+        await ticketService.listTickets(
+          query,
+          principal,
+        );
+
+      sendSuccess(response, {
         data: result.data,
         meta: result.meta,
       });
     } catch (error) {
-      handleError(error, res);
+      handleError(error, response);
     }
   },
 
-  async detail(req: Request, res: Response) {
+  async detail(request: Request, response: Response) {
     try {
-      const params = getValidated<TicketIdParams>(res, "params");
-      const query = getValidated<TicketDetailQuery>(res, "query");
+      const principal =
+        getAuthenticatedPrincipal(request);
 
-      const result = await ticketService.getTicketById(
-        params.id,
-        query,
-        getActorContext(req),
-      );
+      const params =
+        getValidated<TicketIdParams>(
+          response,
+          "params",
+        );
 
-      sendSuccess(res, {
+      const query =
+        getValidated<TicketDetailQuery>(
+          response,
+          "query",
+        );
+
+      const result =
+        await ticketService.getTicketById(
+          params.id,
+          query,
+          principal,
+        );
+
+      sendSuccess(response, {
         data: result,
       });
     } catch (error) {
-      handleError(error, res);
+      handleError(error, response);
     }
   },
 
-  async update(req: Request, res: Response) {
+  async update(request: Request, response: Response) {
     try {
-      const params = getValidated<TicketIdParams>(res, "params");
-      const body = getValidated<UpdateTicketInput>(res, "body");
+      const principal =
+        getAuthenticatedPrincipal(request);
 
-      const result = await ticketService.updateTicket(
-        params.id,
-        body,
-        getActorContext(req),
-      );
+      const params =
+        getValidated<TicketIdParams>(
+          response,
+          "params",
+        );
 
-      sendSuccess(res, {
+      const body =
+        getValidated<UpdateTicketInput>(
+          response,
+          "body",
+        );
+
+      const result =
+        await ticketService.updateTicket(
+          params.id,
+          body,
+          principal,
+        );
+
+      sendSuccess(response, {
         message: "Ticket updated successfully.",
         data: result,
       });
     } catch (error) {
-      handleError(error, res);
+      handleError(error, response);
     }
   },
 
-  async changeStatus(req: Request, res: Response) {
+  async changeStatus(
+    request: Request,
+    response: Response,
+  ) {
     try {
-      const params = getValidated<TicketIdParams>(res, "params");
-      const body = getValidated<ChangeStatusInput>(res, "body");
+      const principal =
+        getAuthenticatedPrincipal(request);
 
-      const result = await ticketService.changeStatus(
-        params.id,
-        body,
-        getActorContext(req),
-      );
+      const params =
+        getValidated<TicketIdParams>(
+          response,
+          "params",
+        );
 
-      sendSuccess(res, {
+      const body =
+        getValidated<ChangeStatusInput>(
+          response,
+          "body",
+        );
+
+      const result =
+        await ticketService.changeStatus(
+          params.id,
+          body,
+          principal,
+        );
+
+      sendSuccess(response, {
         message: "Ticket status updated successfully.",
         data: result,
       });
     } catch (error) {
-      handleError(error, res);
+      handleError(error, response);
     }
   },
 
-  async assign(req: Request, res: Response) {
+  async assign(request: Request, response: Response) {
     try {
-      const params = getValidated<TicketIdParams>(res, "params");
-      const body = getValidated<AssignTicketInput>(res, "body");
+      const principal =
+        getAuthenticatedPrincipal(request);
 
-      const result = await ticketService.assignTicket(
-        params.id,
-        body,
-        getActorContext(req),
-      );
+      const params =
+        getValidated<TicketIdParams>(
+          response,
+          "params",
+        );
 
-      sendSuccess(res, {
-        message: "Ticket assignment updated successfully.",
+      const body =
+        getValidated<AssignTicketInput>(
+          response,
+          "body",
+        );
+
+      const result =
+        await ticketService.assignTicket(
+          params.id,
+          body,
+          principal,
+        );
+
+      sendSuccess(response, {
+        message:
+          "Ticket assignment updated successfully.",
         data: result,
       });
     } catch (error) {
-      handleError(error, res);
+      handleError(error, response);
     }
   },
 
-  async changePriority(req: Request, res: Response) {
+  async changePriority(
+    request: Request,
+    response: Response,
+  ) {
     try {
-      const params = getValidated<TicketIdParams>(res, "params");
-      const body = getValidated<ChangePriorityInput>(res, "body");
+      const principal =
+        getAuthenticatedPrincipal(request);
 
-      const result = await ticketService.changePriority(
-        params.id,
-        body,
-        getActorContext(req),
-      );
+      const params =
+        getValidated<TicketIdParams>(
+          response,
+          "params",
+        );
 
-      sendSuccess(res, {
-        message: "Ticket priority updated successfully.",
+      const body =
+        getValidated<ChangePriorityInput>(
+          response,
+          "body",
+        );
+
+      const result =
+        await ticketService.changePriority(
+          params.id,
+          body,
+          principal,
+        );
+
+      sendSuccess(response, {
+        message:
+          "Ticket priority updated successfully.",
         data: result,
       });
     } catch (error) {
-      handleError(error, res);
+      handleError(error, response);
     }
   },
 
-  async remove(req: Request, res: Response) {
+  async remove(request: Request, response: Response) {
     try {
-      const params = getValidated<TicketIdParams>(res, "params");
+      const principal =
+        getAuthenticatedPrincipal(request);
 
-      const result = await ticketService.deleteTicket(
-        params.id,
-        getActorContext(req),
-      );
+      const params =
+        getValidated<TicketIdParams>(
+          response,
+          "params",
+        );
 
-      sendSuccess(res, {
+      const result =
+        await ticketService.deleteTicket(
+          params.id,
+          principal,
+        );
+
+      sendSuccess(response, {
         message: result.message,
         data: result.data,
       });
     } catch (error) {
-      handleError(error, res);
+      handleError(error, response);
     }
   },
 };

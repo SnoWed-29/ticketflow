@@ -76,8 +76,6 @@ export const createTicketBodySchema = z
 
     categoryId: uuidSchema,
 
-    requesterId: userIdSchema.optional(),
-
     assigneeId: userIdSchema.nullable().optional(),
   })
   .strict();
