@@ -4,6 +4,7 @@ import { requireRoles } from "../../middlewares/requireRoles.js";
 import { validateRequest } from "../../middlewares/validateRequest.js";
 
 import { ticketController } from "./ticket.controller.js";
+import { ticketCreationRateLimiter } from "../../middlewares/rateLimit.js";
 
 import {
   assignTicketBodySchema,
@@ -20,6 +21,7 @@ const router = Router();
 
 router.post(
   "/",
+  ticketCreationRateLimiter,
   requireRoles(
     "ticket_user",
     "ticket_agent",
@@ -31,6 +33,8 @@ router.post(
   }),
   ticketController.create,
 );
+
+router.get("/stats", ticketController.stats);
 
 router.get(
   "/",

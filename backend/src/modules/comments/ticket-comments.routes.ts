@@ -5,10 +5,12 @@ import {
     createCommentBodySchema,
     ticketIdParamSchema,
 } from "./comment.schema.js";
+import { commentCreationRateLimiter } from "../../middlewares/rateLimit.js";
 
 const router = Router();
 
 router.post("/:ticketId/comments",
+    commentCreationRateLimiter,
     validateRequest({
         params: ticketIdParamSchema,
         body: createCommentBodySchema,

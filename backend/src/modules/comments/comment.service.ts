@@ -15,6 +15,7 @@ import { isSupportStaff } from "../tickets/ticket.authorization.js";
 import { commentHook } from "./comment.hooks.js";
 import { commentRepository } from "./comment.repository.js";
 import { commentSerializer } from "./comment.serializer.js";
+import { invalidateCommentCache } from "../../utils/cache/cache-invalidation.js";
 
 import type {
   CreateCommentInput,
@@ -102,6 +103,8 @@ export const commentService = {
         content: input.content,
         isInternalNote,
       });
+
+    await invalidateCommentCache();
 
     await writeTicketEvent({
       ticketId,
@@ -192,6 +195,8 @@ export const commentService = {
         input,
       );
 
+    await invalidateCommentCache();
+
     await commentHook.afterCommentUpdated({
       ticketId: updatedComment.ticketId,
       commentId,
@@ -237,6 +242,8 @@ export const commentService = {
       await commentRepository.softDelete(
         commentId,
       );
+
+    await invalidateCommentCache();
 
     await commentHook.afterCommentDeleted({
       ticketId: deletedComment.ticketId,

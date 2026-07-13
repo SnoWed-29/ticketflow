@@ -10,6 +10,7 @@ import {
 import { writeTicketEvent } from "./ticket-event.writer.js";
 import { ticketRepository } from "./ticket.repository.js";
 import { ticketSerializer } from "./ticket.serializer.js";
+import { invalidateTicketCache } from "../../utils/cache/cache-invalidation.js";
 
 import {
   canCancelTicket,
@@ -119,6 +120,8 @@ export const ticketService = {
         input.priority ?? DEFAULT_TICKET_PRIORITY,
     });
 
+    await invalidateTicketCache();
+
     await writeTicketEvent({
       ticketId: ticket.id,
       type: TICKET_EVENT_TYPES.CREATED,
@@ -224,6 +227,8 @@ export const ticketService = {
 
     const updatedTicket =
       await ticketRepository.update(id, input);
+
+    await invalidateTicketCache();
 
     if (
       input.categoryId !== undefined &&
@@ -338,6 +343,8 @@ export const ticketService = {
         statusUpdate,
       );
 
+    await invalidateTicketCache();
+
     const eventType = isClosing
       ? TICKET_EVENT_TYPES.CLOSED
       : isReopening
@@ -396,6 +403,8 @@ export const ticketService = {
     const updatedTicket =
       await ticketRepository.assign(id, input);
 
+    await invalidateTicketCache();
+
     await writeTicketEvent({
       ticketId: id,
       type: input.assigneeId
@@ -446,6 +455,8 @@ export const ticketService = {
         input.priority,
       );
 
+    await invalidateTicketCache();
+
     await writeTicketEvent({
       ticketId: id,
       type: TICKET_EVENT_TYPES.PRIORITY_CHANGED,
@@ -475,6 +486,8 @@ export const ticketService = {
 
     const cancelledTicket =
       await ticketRepository.markAsCancelled(id);
+
+    await invalidateTicketCache();
 
     await writeTicketEvent({
       ticketId: id,
